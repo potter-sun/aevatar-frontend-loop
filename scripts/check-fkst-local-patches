@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+FKST_ROOT="${FKST_PACKAGE_ROOT:-/opt/homebrew/lib/fkst/current/share/fkst}"
+CODEX_REFACTOR_LOOP_SKILL_DIR="${CODEX_REFACTOR_LOOP_SKILL_DIR:-$HOME/.codex/skills/codex-refactor-loop}"
+
+failures=0
+
+note() {
+  printf '%s\n' "$*"
+}
+
+fail() {
+  failures=$((failures + 1))
+  printf 'FAIL: %s\n' "$*" >&2
+}
+
+require_file() {
+  local path="$1"
+  if [ ! -f "$path" ]; then
+    fail "missing file: $path"
+    return 1
+  fi
+}
+
+require_backup_differs() {
+  local rel="$1" backup_suffix="$2" label="$3"
+  local cur="$FKST_ROOT/$rel"
+  local bak="$cur.$backup_suffix"
+  require_file "$cur" || return 1
+  require_file "$bak" || return 1
+  if diff -q "$bak" "$cur" >/dev/null; then
+    fail "$label is absent: $rel matches $backup_suffix"
+  else
+    note "ok: $label present in $rel"
+  fi
+}
+
+require_backup_same() {
+  local rel="$1" backup_suffix="$2" label="$3"
+  local cur="$FKST_ROOT/$rel"
+  local bak="$cur.$backup_suffix"
+  require_file "$cur" || return 1
+  require_file "$bak" || return 1
+  if diff -q "$bak" "$cur" >/dev/null; then
+    note "ok: $label absent in $rel"
+  else
+    fail "$label is still present or file drifted: $rel differs from $backup_suffix"
+  fi
+}
+
+require_pattern() {
+  local rel="$1" pattern="$2" label="$3"
+  local cur="$FKST_ROOT/$rel"
+  require_file "$cur" || return 1
+  if grep -Fq "$pattern" "$cur"; then
+    note "ok: $label"
+  else
+    fail "missing pattern for $label in $rel: $pattern"
+  fi
+}
+
+reject_pattern() {
+  local rel="$1" pattern="$2" label="$3"
+  local cur="$FKST_ROOT/$rel"
+  require_file "$cur" || return 1
+  if grep -Fq "$pattern" "$cur"; then
+    fail "forbidden pattern for $label in $rel: $pattern"
+  else
+    note "ok: $label not present"
+  fi
+}
+
+note "checking FKST package root: $FKST_ROOT"
+
+require_backup_differs "departments/evolve/candidate_implement.lua" \
+  "bak-fkst-pr-mode-20260603" "PR-only candidate creation patch"
+require_pattern "departments/evolve/candidate_implement.lua" \
+  "mode=branch-pr-only" "candidate PR body mode marker"
+require_pattern "departments/evolve/candidate_implement.lua" \
+  "FKST must not auto-merge this candidate into the integration branch" \
+  "candidate PR no-auto-merge body marker"
+require_pattern "departments/evolve/candidate_implement.lua" \
+  'trim(ctx.github_pr_number or "") == ""' \
+  "candidate PR creation no longer requires a GitHub issue number"
+
+require_backup_differs "departments/auto_promote/main.lua" \
+  "bak-fkst-pr-mode-20260603" "auto-promote PR branch skip patch"
+require_pattern "departments/auto_promote/main.lua" \
+  "PR branch mode; skip promote_request" \
+  "auto-promote skips PR branch mode"
+
+for rel in \
+  departments/promoter/main.lua \
+  departments/evolve/branch_refs.lua \
+  departments/evolve/failure_archive.lua \
+  departments/review/consensus_flow.lua \
+  departments/review/context_helpers.lua \
+  departments/review/worktree_artifacts.lua \
+  scripts/review_evidence_gate.lua
+do
+  require_backup_differs "$rel" "bak-fkst-pr-mode-20260603" "runtime artifact support patch"
+done
+
+require_backup_same "departments/github_publisher/main.lua" \
+  "bak-fkst-pr-decoration-20260603" "mistaken FKST-native PR decoration patch"
+require_backup_same "departments/evolve/candidate_implement.lua" \
+  "bak-fkst-pr-decoration-20260603" "mistaken candidate PR decoration payload patch"
+
+reject_pattern "departments/github_publisher/main.lua" \
+  "RUNBOOK_LABELS" "runbook labels inside github_publisher"
+reject_pattern "departments/github_publisher/main.lua" \
+  "status_card_body" "status-card template inside github_publisher"
+reject_pattern "departments/github_publisher/main.lua" \
+  "raise_pr_decoration" "publisher-triggered PR decoration"
+
+lua -e 'assert(loadfile("'"$FKST_ROOT"'/departments/auto_promote/main.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/evolve/branch_refs.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/evolve/candidate_implement.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/evolve/failure_archive.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/promoter/main.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/review/consensus_flow.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/review/context_helpers.lua")); assert(loadfile("'"$FKST_ROOT"'/departments/review/worktree_artifacts.lua")); assert(loadfile("'"$FKST_ROOT"'/scripts/review_evidence_gate.lua")); print("ok: FKST Lua syntax")'
+
+bash -n "$CONTROL_ROOT/scripts/decorate-fkst-pr-with-codex-loop"
+note "ok: control adapter shell syntax"
+
+if [ -f "$CODEX_REFACTOR_LOOP_SKILL_DIR/scripts/decorate_existing_pr.sh" ]; then
+  bash -n "$CODEX_REFACTOR_LOOP_SKILL_DIR/scripts/decorate_existing_pr.sh"
+  note "ok: codex-refactor-loop helper shell syntax"
+else
+  fail "missing codex-refactor-loop helper: $CODEX_REFACTOR_LOOP_SKILL_DIR/scripts/decorate_existing_pr.sh"
+fi
+
+if [ "$failures" -ne 0 ]; then
+  printf 'FKST local patch check failed: %d issue(s)\n' "$failures" >&2
+  exit 1
+fi
+
+note "FKST local patch check passed"

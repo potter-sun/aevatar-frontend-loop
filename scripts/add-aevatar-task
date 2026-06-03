@@ -138,6 +138,21 @@ $CONTROL_ROOT/scripts/sync-aevatar-integration
 
 This sync is the only allowed direct push to the integration branch. If the sync has conflicts, requires destructive git operations, or cannot push cleanly, stop and report the blocker instead of continuing the task.
 
+## Required PR Output
+
+Do not auto-merge implementation or reconciliation work into \`$FKST_INTEGRATION_BRANCH\`.
+After implementation and verification, push the implementation branch and open or update a normal PR targeting \`$FKST_INTEGRATION_BRANCH\`.
+If related slices are below the runbook PR threshold individually, aggregate them into one reviewable PR batch rather than merging directly.
+Stop at PR ready / waiting for human review and merge.
+After FKST creates or updates the PR, complete the GitHub visibility transaction through the local codex-refactor-loop bridge:
+
+\`\`\`bash
+$CONTROL_ROOT/scripts/decorate-fkst-pr-with-codex-loop --once
+\`\`\`
+
+Do not add runbook labels or status-card templates to FKST package departments. FKST \`github_publisher\` is only the low-level GitHub executor; labels, status cards, phase cards, and readback belong to the codex-refactor-loop controller layer.
+If an approach solver writes a \`Rule exception:\` field, it must be exactly \`Rule exception: none\` unless this task truly changes host project rule sources or trusted-boundary policy. User-authorized smaller PRs are ordinary runbook paths, not rule exceptions.
+
 ## Host Protected Path Policy
 
 Do not modify backend, proto, API, actor, projection, workflow engine/backend paths, backend/runtime infrastructure, database, backend tests, backend config, or architecture docs. Frontend page runtime helpers under \`apps/aevatar-console-web/src/pages/**/runtime/**\` are allowed for frontend/product tasks. If a backend error appears, only locate, reproduce, record, attribute, and risk-label it, then write exactly:
@@ -154,7 +169,7 @@ Use real product/UI investigation from the Aevatar host repo and the runbook. Do
 
 ## Fix Path
 
-Implement the narrowest frontend/product slice that satisfies the task details below, using isolated FKST worktrees and the configured integration branch. Do not create PRs below the runbook threshold unless the user explicitly authorized that exception.
+Implement the narrowest frontend/product slice that satisfies the task details below, using isolated FKST worktrees and the configured integration branch as the PR base. Do not merge directly into the integration branch. Do not create PRs below the runbook threshold unless the user explicitly authorized the smaller PR path.
 
 ## Task Details
 

@@ -44,7 +44,7 @@ Effective from 2026-06-01:
 - Exclude host-forbidden paths.
 - Do not add files or churn code merely to hit the threshold.
 - If fewer than 10 meaningful files are present, continue discovery, consensus, or implementation within the same theme.
-- Exception: if the user explicitly requests a narrow fix or asks to open a PR for a smaller change, the loop may open a PR below the 10-file threshold. The status card must state the file count and explain that the threshold exception was user-authorized.
+- User-authorized narrow PR path: if the user explicitly requests a narrow fix or asks to open a PR for a smaller change, the loop may open a PR below the 10-file threshold. The status card must state the file count and explain that the smaller PR was user-authorized.
 
 ## Branch And PR Rules
 
@@ -53,6 +53,11 @@ Effective from 2026-06-01:
 - Before executing each implementation task, synchronize the remote `dev` branch into the configured integration branch.
 - The sync must use remote facts: fetch `origin dev auto-frontend-dev`, update local `auto-frontend-dev` from `origin/auto-frontend-dev`, merge `origin/dev` into it, and push `auto-frontend-dev` back to `origin` only after the merge succeeds.
 - If the sync has conflicts, requires destructive git operations, or cannot push cleanly, stop and report the blocker instead of continuing the task.
+- FKST must not auto-merge implementation or reconciliation branches into the integration branch.
+- FKST must publish implementation work as a normal PR targeting the configured integration branch.
+- FKST must not implement its own GitHub PR decoration lifecycle. After FKST creates a PR, hand the PR ack fact to the local `codex-refactor-loop` visibility contract through `./scripts/decorate-fkst-pr-with-codex-loop`; labels, status cards, phase cards, and readback belong to the controller layer, not `github_publisher`.
+- If related slices are below the PR threshold individually, aggregate them into one reviewable PR batch instead of merging them directly.
+- When FKST approach solvers include a `Rule exception:` field, they must write exactly `Rule exception: none` unless the implementation truly changes host project rule sources or trusted-boundary policy. User-authorized smaller PRs are ordinary runbook paths, not rule exceptions.
 - Branch naming must follow the host repository rules.
 - For Aevatar, branch naming is `<type>/YYYY-MM-DD_<purpose>`.
 - Commit messages should be imperative.
@@ -65,6 +70,8 @@ Effective from 2026-06-01:
 ## GitHub Visibility
 
 GitHub is the public status surface for the automation. Every PR created by this loop must immediately get labels and a status card.
+
+FKST native PRs use the same visible contract. FKST's `github_publisher` is only a low-level GitHub executor. The Aevatar control repo bridge `./scripts/decorate-fkst-pr-with-codex-loop` watches FKST `github_publisher` ack facts and applies the local `codex-refactor-loop` label/status-card/readback transaction. Do not copy status-card templates or runbook labels into FKST package departments.
 
 ### PR Status Transaction
 
@@ -231,6 +238,7 @@ Each round should check active work and active codex processes related to this l
 - Integration branch: `auto-frontend-dev`
 - Remote integration branch: `origin/auto-frontend-dev` exists; the local branch may need `git fetch` and checkout before use.
 - Required pre-task sync: merge remote `origin/dev` into `auto-frontend-dev` and push the updated integration branch before each implementation task.
+- Aevatar FKST output mode: branch plus PR only; no automatic implementation merge into `auto-frontend-dev`.
 - Recommended pre-task sync command from the control repo: `./scripts/sync-aevatar-integration`
 - Run FKST from the control repo with `./scripts/fkst-aevatar <command>` so the current shell stays in the control repo while FKST targets the Aevatar host repo.
 - Verified FKST commands from the control repo:
