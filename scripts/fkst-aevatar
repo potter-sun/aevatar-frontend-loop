@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="${FKST_AEVATAR_ENV:-$CONTROL_ROOT/fkst-aevatar.env}"
+
+if [ ! -f "$ENV_FILE" ]; then
+  printf 'missing config: %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+set +a
+
+if [ -z "${AEVATAR_REPO:-}" ]; then
+  printf 'AEVATAR_REPO is required in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+exec fkst --repo "$AEVATAR_REPO" "$@"
