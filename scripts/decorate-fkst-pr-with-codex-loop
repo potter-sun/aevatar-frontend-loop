@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/decorate-fkst-pr-with-codex-loop [--once] [--dry-run]
+  scripts/decorate-fkst-pr-with-codex-loop --watch [--interval SECONDS]
+  scripts/decorate-fkst-pr-with-codex-loop --ack-file PATH [--dry-run]
+
+Thin adapter from FKST github_publisher ack facts to the local
+codex-refactor-loop PR visibility helper. FKST creates the PR; the local
+controller skill owns labels, status cards, and readback.
+EOF
+}
+
+MODE="once"
+DRY_RUN=0
+INTERVAL=30
+ACK_FILE=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --once)
+      MODE="once"
+      shift
+      ;;
+    --watch)
+      MODE="watch"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --ack-file)
+      [ -n "${2:-}" ] || { printf '%s\n' "--ack-file requires PATH" >&2; exit 2; }
+      ACK_FILE="$2"
+      MODE="ack-file"
+      shift 2
+      ;;
+    --interval)
+      [ -n "${2:-}" ] || { printf '%s\n' "--interval requires SECONDS" >&2; exit 2; }
+      INTERVAL="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$INTERVAL" in
+  *[!0-9]*|"")
+    printf 'invalid interval: %s\n' "$INTERVAL" >&2
+    exit 2
+    ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="${FKST_AEVATAR_ENV:-$CONTROL_ROOT/fkst-aevatar.env}"
+
+if [ ! -f "$ENV_FILE" ]; then
+  printf 'missing config: %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+set +a
+
+if [ -z "${AEVATAR_REPO:-}" ]; then
+  printf 'AEVATAR_REPO is required in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+if [ -z "${FKST_INTEGRATION_BRANCH:-}" ]; then
+  printf 'FKST_INTEGRATION_BRANCH is required in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+CODEX_REFACTOR_LOOP_SKILL_DIR="${CODEX_REFACTOR_LOOP_SKILL_DIR:-$HOME/.codex/skills/codex-refactor-loop}"
+DECORATE_HELPER="$CODEX_REFACTOR_LOOP_SKILL_DIR/scripts/decorate_existing_pr.sh"
+if [ ! -x "$DECORATE_HELPER" ]; then
+  if [ -f "$DECORATE_HELPER" ]; then
+    chmod +x "$DECORATE_HELPER"
+  else
+    printf 'missing codex-refactor-loop helper: %s\n' "$DECORATE_HELPER" >&2
+    exit 1
+  fi
+fi
+
+infer_repo_slug() {
+  local remote
+  remote="$(git -C "$AEVATAR_REPO" remote get-url origin 2>/dev/null || true)"
+  if [ -n "$remote" ]; then
+    printf '%s\n' "$remote" |
+      sed -E 's#^git@github.com:##; s#^https://github.com/##; s#\.git$##'
+    return 0
+  fi
+  return 1
+}
+
+GH_REPO_SLUG="${GH_REPO_SLUG:-${FKST_GITHUB_REPO_SLUG:-}}"
+if [ -z "$GH_REPO_SLUG" ]; then
+  GH_REPO_SLUG="$(infer_repo_slug)"
+fi
+if [ -z "$GH_REPO_SLUG" ] || ! [[ "$GH_REPO_SLUG" == */* ]]; then
+  printf 'failed to resolve GH_REPO_SLUG for %s\n' "$AEVATAR_REPO" >&2
+  exit 1
+fi
+
+RUNTIME_ROOT="$(FKST_INTEGRATION_BRANCH="$FKST_INTEGRATION_BRANCH" fkst --repo "$AEVATAR_REPO" status \
+  | sed -n 's/^runtime_root: //p' | head -n 1)"
+if [ -z "$RUNTIME_ROOT" ]; then
+  printf 'failed to resolve FKST runtime root\n' >&2
+  exit 1
+fi
+
+LEDGER_DIR="$RUNTIME_ROOT/pipeline/codex-refactor-loop-pr-visibility"
+
+field_value() {
+  local file="$1" key="$2"
+  sed -n "s/^${key}:[[:space:]]*//p" "$file" | head -n 1
+}
+
+safe_name() {
+  printf '%s\n' "$1" | sed -E 's#[^A-Za-z0-9._-]+#-#g; s#^-+##; s#-+$##'
+}
+
+ledger_file() {
+  local kind="$1" pr_number="$2" head="$3"
+  printf '%s/%s/pr-%s-%s.md\n' "$LEDGER_DIR" "$kind" "$pr_number" "$(safe_name "$head")"
+}
+
+already_handled() {
+  local pr_number="$1" head="$2"
+  [ -f "$(ledger_file decorated "$pr_number" "$head")" ] ||
+    [ -f "$(ledger_file skipped "$pr_number" "$head")" ]
+}
+
+record_ledger() {
+  local kind="$1" pr_number="$2" head="$3" message="$4"
+  [ "$DRY_RUN" -eq 0 ] || return 0
+  local file
+  file="$(ledger_file "$kind" "$pr_number" "$head")"
+  mkdir -p "$(dirname "$file")"
+  {
+    printf 'pr_number: %s\n' "$pr_number"
+    printf 'head: %s\n' "$head"
+    printf 'message: %s\n' "$message"
+    printf 'recorded_at_utc: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'decorator: %s\n' "$DECORATE_HELPER"
+    printf '⟦AI:AUTO-LOOP⟧\n'
+  } > "$file"
+}
+
+decorate_ack() {
+  local ack_file="$1"
+  [ -f "$ack_file" ] || { printf 'missing ack file: %s\n' "$ack_file" >&2; return 1; }
+
+  local action result pr_number head output
+  action="$(field_value "$ack_file" action)"
+  result="$(field_value "$ack_file" result)"
+  pr_number="$(field_value "$ack_file" github_pr_number)"
+  head="$(field_value "$ack_file" head)"
+
+  if [ "$action" != "pr_create" ] || [ "$result" != "ok" ] || [ -z "$pr_number" ]; then
+    return 0
+  fi
+  if already_handled "$pr_number" "$head"; then
+    printf 'already handled PR #%s (%s)\n' "$pr_number" "$head"
+    return 0
+  fi
+
+  local helper_args=(
+    --ack-file "$ack_file"
+    --repo "$GH_REPO_SLUG"
+    --repo-root "$AEVATAR_REPO"
+    --integration-branch "$FKST_INTEGRATION_BRANCH"
+  )
+  if [ "$DRY_RUN" -eq 1 ]; then
+    helper_args+=(--dry-run)
+  fi
+
+  if output="$("$DECORATE_HELPER" "${helper_args[@]}" 2>&1)"; then
+    printf '%s\n' "$output"
+    if printf '%s\n' "$output" | grep -q '^skip PR #'; then
+      record_ledger skipped "$pr_number" "$head" "$(printf '%s\n' "$output" | head -n 1)"
+    elif [ "$DRY_RUN" -eq 0 ]; then
+      record_ledger decorated "$pr_number" "$head" "codex-refactor-loop helper completed"
+    fi
+  else
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
+scan_once() {
+  if [ -n "$ACK_FILE" ]; then
+    decorate_ack "$ACK_FILE"
+    return
+  fi
+  find "$RUNTIME_ROOT/mailbox/threads" -path '*/comments/*-github_publisher-ack.md' -type f -print 2>/dev/null |
+    sort |
+    while IFS= read -r ack; do
+      decorate_ack "$ack"
+    done
+}
+
+if [ "$MODE" = "watch" ]; then
+  while true; do
+    scan_once
+    sleep "$INTERVAL"
+  done
+else
+  scan_once
+fi

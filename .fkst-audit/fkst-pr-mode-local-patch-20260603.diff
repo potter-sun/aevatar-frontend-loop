@@ -1,0 +1,304 @@
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/auto_promote/main.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/auto_promote/main.lua
+index c631b2f..538a470 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/auto_promote/main.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/auto_promote/main.lua
+@@ -327,6 +327,13 @@ local function git_rev_parse(rev, reason)
+ end
+ 
+ local function git_show_branch_path(branch, path)
++    if fkst_paths.is_runtime_pipeline_artifact(path) then
++        local ok, body = pcall(file.read, path)
++        if not ok then
++            fail_review_gate("missing_runtime_artifact:" .. path)
++        end
++        return body or ""
++    end
+     local r = exec_sync("git show " .. shell_quote(branch .. ":" .. path))
+     if r.exit_code ~= 0 then
+         fail_review_gate("missing_committed_artifact:" .. path)
+@@ -334,6 +341,17 @@ local function git_show_branch_path(branch, path)
+     return r.stdout or ""
+ end
+ 
++local function artifact_sha(branch, path, reason)
++    if fkst_paths.is_runtime_pipeline_artifact(path) then
++        local r = exec_sync("git hash-object " .. shell_quote(path))
++        if r.exit_code ~= 0 then
++            fail_review_gate(reason or ("runtime_blob_sha:" .. path))
++        end
++        return trim(r.stdout):lower()
++    end
++    return git_rev_parse(branch .. ":" .. path, reason)
++end
++
+ local function aggregate_artifacts(body)
+     local aggregate = review_gate.parse_review_aggregate_record(body)
+     if not aggregate then
+@@ -409,7 +427,7 @@ local function assert_committed_review_evidence(payload)
+ 
+     local artifacts = aggregate_artifacts(aggregate_body)
+     for _, item in ipairs(artifacts) do
+-        local actual_sha = git_rev_parse(branch .. ":" .. item.path, "reviewer_blob_sha:" .. item.path)
++        local actual_sha = artifact_sha(branch, item.path, "reviewer_blob_sha:" .. item.path)
+         if actual_sha:lower() ~= item.sha then
+             fail_review_gate("reviewer_blob_sha:" .. item.path)
+         end
+@@ -468,10 +486,16 @@ local function validate_protected_payload(payload, branch, signature)
+     local gate = review_gate.validate_protected_witness(branch, implement_path, payload,
+         { integration_branch = integration_branch })
+     gate.implement_path = implement_path
++    gate.github_pending_pr_branch = trim(payload and payload.github_pending_pr_branch or "")
+     return gate
+ end
+ 
+ local function maybe_raise_promote_request(inbox_ref, branch, signature, aggregate_artifact, meta_judge_artifact, review_evidence, protected_gate)
++    if protected_gate and trim(protected_gate.github_pending_pr_branch or "") ~= "" then
++        log.info("auto_promote: PR branch mode; skip promote_request branch=" ..
++            tostring(protected_gate.github_pending_pr_branch))
++        return
++    end
+     local approves = get_approve_entries(inbox_ref)
+     local approve_count = count_matching_approves(approves, inbox_ref, signature.signature_hash,
+         signature.candidate_sha, aggregate_artifact)
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/branch_refs.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/branch_refs.lua
+index 8a324f4..93e7f4e 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/branch_refs.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/branch_refs.lua
+@@ -295,6 +295,10 @@ return function(E)
+     -- Count business commits and skip verdict-only repo-root pipeline/ commits.
+     -- query candidate HEAD for the required implement artifact.
+     function verify_branch_has_artifact(wt, path)
++        if fkst_paths.is_runtime_pipeline_artifact(path) then
++            local ok, body = pcall(file.read, path)
++            return ok and has_ai_sentinel(body)
++        end
+         local r = exec_sync({
+             cmd = "git cat-file -e HEAD:" .. shell_quote(path),
+             cwd = wt,
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/candidate_implement.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/candidate_implement.lua
+index 463a960..1d5f8eb 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/candidate_implement.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/candidate_implement.lua
+@@ -132,6 +132,14 @@ return function(E)
+ 
+     -- give implement.md its own commit helper with one durable output.
+     function commit_implement_artifact(ctx, implement_body)
++        if fkst_paths.is_runtime_pipeline_artifact(ctx.output_path) then
++            local ok, body_or_reason = validate_artifact(ctx.output_path)
++            if not ok then
++                return false, "verdict-commit-fail", tostring(body_or_reason or "")
++            end
++            return true, "runtime-artifact", ""
++        end
++
+         local summary_full = tostring(implement_body or ""):match("##%s*Summary%s*\n%s*([^\n]+)") or "(no summary)"
+         local summary = utf8_safe_truncate(trim(summary_full), 90)
+         if summary == "" then summary = "(no summary)" end
+@@ -419,7 +427,7 @@ return function(E)
+         ctx.parent_setup_sha = trim(sha_r.stdout)
+         ctx.pipeline_dir = pipeline_dir_for(ctx.stem, ctx.candidate)
+         assert_exec("mkdir -p " .. shell_quote(ctx.pipeline_dir), ctx.worktree)
+-        ctx.implement_full = ctx.worktree .. "/" .. ctx.output_path
++        ctx.implement_full = scoped_path(ctx.output_path, ctx.worktree)
+         return true
+     end
+ 
+@@ -573,7 +581,9 @@ return function(E)
+         end
+ 
+         if not verify_branch_has_artifact(ctx.worktree, ctx.output_path) then
+-            local reason = "candidate branch HEAD missing implement artifact: " .. ctx.output_path
++            local reason = fkst_paths.is_runtime_pipeline_artifact(ctx.output_path) and
++                ("runtime implement artifact missing or invalid: " .. ctx.output_path) or
++                ("candidate branch HEAD missing implement artifact: " .. ctx.output_path)
+             fail_candidate(implement_failure_context(ctx), "implement-artifact-missing",
+                 "implement_artifact_missing", reason)
+             return false
+@@ -659,7 +669,7 @@ return function(E)
+             log.warn("push " .. ctx.branch .. " failed: " .. trim(push_r.stderr))
+         end
+ 
+-        if pushed and business >= 1 and trim(ctx.github_issue_number or "") ~= "" and trim(ctx.github_pr_number or "") == "" then
++        if pushed and business >= 1 and trim(ctx.github_pr_number or "") == "" then
+             safe_raise("github_outbound_request", {
+                 kind = "pr_create",
+                 native_fact = "candidate-pr-create:" .. tostring(ctx.stem) .. ":candidate-" .. tostring(ctx.candidate),
+@@ -672,10 +682,14 @@ return function(E)
+                 body = table.concat({
+                     "## Candidate",
+                     "",
++                    "mode=branch-pr-only",
+                     "source_issue=" .. tostring(ctx.github_subject_url or ctx.github_issue_number or ""),
+                     "branch=" .. tostring(ctx.branch),
++                    "base=" .. tostring(integration_branch()),
+                     "implement_path=" .. tostring(ctx.output_path),
+                     "approach_artifact=" .. tostring(ctx.meta_path),
++                    "",
++                    "This PR was created by FKST for human review. FKST must not auto-merge this candidate into the integration branch.",
+                 }, "\n"),
+             })
+         end
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/failure_archive.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/failure_archive.lua
+index b360d22..8a3f29d 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/failure_archive.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/evolve/failure_archive.lua
+@@ -219,7 +219,11 @@ return function(E)
+ 
+         local ok, err = pcall(function()
+             assert_exec("mkdir -p " .. shell_quote(pipeline_dir), wt)
+-            file.write(wt .. "/" .. trace_path, content)
++            local full_trace_path = scoped_path(trace_path, wt)
++            file.write(full_trace_path, content)
++            if fkst_paths.is_runtime_pipeline_artifact(trace_path) then
++                return
++            end
+             assert_exec("git add -f " .. shell_quote(trace_path), wt)
+             local diff_r = exec_sync({ cmd = "git diff --cached --quiet -- " .. shell_quote(trace_path), cwd = wt })
+             if diff_r.exit_code == 0 then
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/promoter/main.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/promoter/main.lua
+index 6a80486..1fdccd8 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/promoter/main.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/promoter/main.lua
+@@ -176,6 +176,13 @@ local function validate_review_evidence_shape(payload)
+ end
+ 
+ local function git_show_branch_path(branch, path)
++    if fkst_paths.is_runtime_pipeline_artifact(path) then
++        local ok, body = pcall(file.read, path)
++        if not ok then
++            fail_review_gate("missing_runtime_artifact:" .. path)
++        end
++        return body or ""
++    end
+     local r = exec_sync("git show " .. shell_quote(branch .. ":" .. path))
+     if r.exit_code ~= 0 then
+         fail_review_gate("missing_committed_artifact:" .. path)
+@@ -191,6 +198,17 @@ local function git_rev_parse(rev, reason)
+     return trim(r.stdout)
+ end
+ 
++local function artifact_sha(branch, path, reason)
++    if fkst_paths.is_runtime_pipeline_artifact(path) then
++        local r = exec_sync("git hash-object " .. shell_quote(path))
++        if r.exit_code ~= 0 then
++            fail_review_gate(reason or ("runtime_blob_sha:" .. path))
++        end
++        return trim(r.stdout):lower()
++    end
++    return git_rev_parse(branch .. ":" .. path, reason)
++end
++
+ local function parse_aggregate_artifacts(body)
+     local aggregate = review_gate.parse_review_aggregate_record(body)
+     if not aggregate then
+@@ -264,7 +282,7 @@ local function assert_committed_review_evidence(payload, branch)
+ 
+     local artifacts = parse_aggregate_artifacts(aggregate_body)
+     for _, item in ipairs(artifacts) do
+-        local actual_sha = git_rev_parse(candidate_branch .. ":" .. item.path,
++        local actual_sha = artifact_sha(candidate_branch, item.path,
+             "reviewer_blob_sha:" .. item.path)
+         if actual_sha:lower() ~= item.sha then
+             fail_review_gate("reviewer_blob_sha:" .. item.path)
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/review/consensus_flow.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/review/consensus_flow.lua
+index 66839c8..32c8e9c 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/review/consensus_flow.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/review/consensus_flow.lua
+@@ -442,6 +442,22 @@ end
+ 
+ function next_attempt_from_branch(branch, stem, candidate)
+     local prefix = pipeline_dir_for(stem, candidate)
++    if fkst_paths.is_runtime_pipeline_artifact(prefix) then
++        local r = exec_result("find " .. shell_quote(prefix) ..
++            " -type f -path '*/review-attempt-*/*' -print 2>/dev/null",
++            nil, "review-exec-fail", "next_attempt_from_branch")
++        if not r or r.exit_code ~= 0 then
++            return 1
++        end
++        local max_attempt = 0
++        for line in tostring(r.stdout or ""):gmatch("([^\r\n]+)") do
++            local attempt = tonumber(line:match("/review%-attempt%-(%d+)/"))
++            if attempt and attempt > max_attempt then
++                max_attempt = attempt
++            end
++        end
++        return max_attempt + 1
++    end
+     local r = exec_result("git ls-tree -r --name-only " .. shell_quote(branch) .. " -- " .. shell_quote(prefix),
+         nil, "review-exec-fail", "next_attempt_from_branch")
+     if not r or r.exit_code ~= 0 then
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/review/context_helpers.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/review/context_helpers.lua
+index cec19a4..81e9943 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/review/context_helpers.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/review/context_helpers.lua
+@@ -290,6 +290,13 @@ function read_inbox_body(payload)
+ end
+ 
+ function read_branch_artifact(branch, artifact_path)
++    if fkst_paths.is_runtime_pipeline_artifact(artifact_path) then
++        local ok, body = pcall(file.read, artifact_path)
++        if not ok then
++            return nil, tostring(body)
++        end
++        return body, ""
++    end
+     local r = exec_result("git show " .. shell_quote(branch .. ":" .. artifact_path),
+         nil, "review-fs-read-fail", "read_branch_artifact")
+     if not r or r.exit_code ~= 0 then
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/departments/review/worktree_artifacts.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/departments/review/worktree_artifacts.lua
+index 7e017dc..1f49a7f 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/departments/review/worktree_artifacts.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/departments/review/worktree_artifacts.lua
+@@ -175,8 +175,15 @@ function ensure_dir_for(path, wt)
+     end
+ end
+ 
++function scoped_artifact_path(wt, path)
++    if tostring(path or ""):match("^/") then
++        return tostring(path or "")
++    end
++    return tostring(wt or "") .. "/" .. tostring(path or "")
++end
++
+ function validate_worktree_artifact(wt, path)
+-    local full = wt .. "/" .. path
++    local full = scoped_artifact_path(wt, path)
+     if not file.exists(full) then
+         return nil, "artifact-missing", "missing artifact: " .. path
+     end
+@@ -200,7 +207,7 @@ end
+ 
+ function write_worktree_artifact(wt, path, body)
+     ensure_dir_for(path, wt)
+-    local ok, err = pcall(file.write, wt .. "/" .. path, ensure_ai_body(body))
++    local ok, err = pcall(file.write, scoped_artifact_path(wt, path), ensure_ai_body(body))
+     if not ok then
+         fail("review-fs-write-fail", "write_worktree_artifact",
+  "write worktree artifact failed: " .. tostring(path), stringify_error(err))
+diff --git a/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_gate.lua.bak-fkst-pr-mode-20260603 b/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_gate.lua
+index 7b74644..1b6d4b9 100644
+--- a/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_gate.lua.bak-fkst-pr-mode-20260603
++++ b/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_gate.lua
+@@ -854,12 +854,22 @@ function M.review_evidence_hash(value, opts)
+ end
+ 
+ function git_show_blob(branch, path, opts)
++    if fkst_paths.is_runtime_pipeline_artifact(path) then
++        local ok, body = pcall(file.read, path)
++        if ok then return tostring(body or ""), nil end
++        return nil, tostring(body)
++    end
+     local r = run_cmd("git show " .. shell_quote(branch .. ":" .. path), opts)
+     if r.exit_code ~= 0 then return nil, trim(r.stderr) end
+     return tostring(r.stdout or ""), nil
+ end
+ 
+ function git_blob_sha(branch, path, opts)
++    if fkst_paths.is_runtime_pipeline_artifact(path) then
++        local r = run_cmd("git hash-object " .. shell_quote(path), opts)
++        if r.exit_code ~= 0 then return nil, trim(r.stderr) end
++        return trim(r.stdout):lower()
++    end
+     local r = run_cmd("git rev-parse " .. shell_quote(branch .. ":" .. path), opts)
+     if r.exit_code ~= 0 then return nil, trim(r.stderr) end
+     return trim(r.stdout):lower()
