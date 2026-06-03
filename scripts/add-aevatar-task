@@ -138,7 +138,7 @@ $CONTROL_ROOT/scripts/sync-aevatar-integration
 
 This sync is the only allowed direct push to the integration branch. If the sync has conflicts, requires destructive git operations, or cannot push cleanly, stop and report the blocker instead of continuing the task.
 
-## Host Forbidden Paths
+## Host Protected Path Policy
 
 Do not modify backend, proto, API, actor, projection, workflow engine/backend paths, backend/runtime infrastructure, database, backend tests, backend config, or architecture docs. Frontend page runtime helpers under \`apps/aevatar-console-web/src/pages/**/runtime/**\` are allowed for frontend/product tasks. If a backend error appears, only locate, reproduce, record, attribute, and risk-label it, then write exactly:
 
