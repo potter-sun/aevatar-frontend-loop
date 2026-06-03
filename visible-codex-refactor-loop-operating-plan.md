@@ -50,10 +50,13 @@ Effective from 2026-06-01:
 
 - PR base must be the host-configured integration branch, never an unrelated default branch.
 - For Aevatar, the integration branch is `auto-frontend-dev`.
+- Before executing each implementation task, synchronize the remote `dev` branch into the configured integration branch.
+- The sync must use remote facts: fetch `origin dev auto-frontend-dev`, update local `auto-frontend-dev` from `origin/auto-frontend-dev`, merge `origin/dev` into it, and push `auto-frontend-dev` back to `origin` only after the merge succeeds.
+- If the sync has conflicts, requires destructive git operations, or cannot push cleanly, stop and report the blocker instead of continuing the task.
 - Branch naming must follow the host repository rules.
 - For Aevatar, branch naming is `<type>/YYYY-MM-DD_<purpose>`.
 - Commit messages should be imperative.
-- Never push directly to the integration branch unless the user explicitly authorizes it.
+- Never push directly to the integration branch except for the required `origin/dev` -> integration branch synchronization described above, unless the user explicitly authorizes another integration-branch push.
 - Never run `gh pr merge`.
 - Never enable auto-merge.
 - Never simulate or click a GitHub merge action.
@@ -216,6 +219,7 @@ Each round should check active work and active codex processes related to this l
 - Control repo: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop`
 - FKST wrapper: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/scripts/fkst-aevatar`
 - FKST task creator: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/scripts/add-aevatar-task`
+- Integration sync script: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/scripts/sync-aevatar-integration`
 - FKST wrapper config: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/fkst-aevatar.env`
 - Repo: `/Users/pottersun/Desktop/sbt_projects/aevatar`
 - Remote: `git@github.com:aevatarAI/aevatar.git`
@@ -224,6 +228,8 @@ Each round should check active work and active codex processes related to this l
 - Current local branch at last verification: `dev`
 - Integration branch: `auto-frontend-dev`
 - Remote integration branch: `origin/auto-frontend-dev` exists; the local branch may need `git fetch` and checkout before use.
+- Required pre-task sync: merge remote `origin/dev` into `auto-frontend-dev` and push the updated integration branch before each implementation task.
+- Recommended pre-task sync command from the control repo: `./scripts/sync-aevatar-integration`
 - Run FKST from the control repo with `./scripts/fkst-aevatar <command>` so the current shell stays in the control repo while FKST targets the Aevatar host repo.
 - Verified FKST commands from the control repo:
   - `./scripts/fkst-aevatar status`
@@ -242,12 +248,13 @@ Each round should check active work and active codex processes related to this l
 1. Reload local skill and host rules.
 2. Run `./scripts/fkst-aevatar doctor` from the control repo.
 3. Use `./scripts/add-aevatar-task --dry-run "Task title"` before adding any new FKST inbox task.
-4. Verify `consensus-rnd`.
-5. Record main worktree status.
-6. Inspect open automation PRs and labels.
-7. Run `git diff --check`.
-8. Check whether active work has no worker or missing status labels.
-9. Continue the consensus/implementation/review route.
-10. Enforce the 10-file PR threshold.
-11. Post visible transcript and GitHub status as needed.
-12. Stop before merge.
+4. Synchronize `origin/dev` into `auto-frontend-dev`; stop and report conflicts or push failures.
+5. Verify `consensus-rnd`.
+6. Record main worktree status.
+7. Inspect open automation PRs and labels.
+8. Run `git diff --check`.
+9. Check whether active work has no worker or missing status labels.
+10. Continue the consensus/implementation/review route.
+11. Enforce the 10-file PR threshold.
+12. Post visible transcript and GitHub status as needed.
+13. Stop before merge.

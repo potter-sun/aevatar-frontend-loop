@@ -126,6 +126,17 @@ The control runbook is the visible supervisor policy for this Aevatar FKST task.
 - Integration branch: \`$FKST_INTEGRATION_BRANCH\`
 - Current control repo: \`$CONTROL_ROOT\`
 - FKST wrapper: \`$CONTROL_ROOT/scripts/fkst-aevatar\`
+- Integration sync script: \`$CONTROL_ROOT/scripts/sync-aevatar-integration\`
+
+## Required Pre-task Sync
+
+Before implementation work starts, synchronize remote \`origin/dev\` into \`$FKST_INTEGRATION_BRANCH\` by running this from the control repo:
+
+\`\`\`bash
+$CONTROL_ROOT/scripts/sync-aevatar-integration
+\`\`\`
+
+This sync is the only allowed direct push to the integration branch. If the sync has conflicts, requires destructive git operations, or cannot push cleanly, stop and report the blocker instead of continuing the task.
 
 ## Host Forbidden Paths
 
