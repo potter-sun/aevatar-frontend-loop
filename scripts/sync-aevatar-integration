@@ -24,10 +24,15 @@ if [ -z "${FKST_INTEGRATION_BRANCH:-}" ]; then
   exit 1
 fi
 
-if [ -n "$(git -C "$AEVATAR_REPO" status --porcelain)" ]; then
-  printf 'refusing to sync with dirty Aevatar worktree: %s\n' "$AEVATAR_REPO" >&2
+if ! git -C "$AEVATAR_REPO" diff --quiet || ! git -C "$AEVATAR_REPO" diff --cached --quiet; then
+  printf 'refusing to sync with tracked Aevatar worktree changes: %s\n' "$AEVATAR_REPO" >&2
   git -C "$AEVATAR_REPO" status --short >&2
   exit 1
+fi
+
+if [ -n "$(git -C "$AEVATAR_REPO" ls-files --others --exclude-standard)" ]; then
+  printf 'warning: untracked Aevatar files are present; sync will not use or remove them\n' >&2
+  git -C "$AEVATAR_REPO" status --short >&2
 fi
 
 git -C "$AEVATAR_REPO" fetch origin dev "$FKST_INTEGRATION_BRANCH"
