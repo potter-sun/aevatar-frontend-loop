@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/add-aevatar-task "Task title" [slug]
+  scripts/add-aevatar-task --dry-run "Task title" [slug]
+
+Creates a numbered FKST evolve inbox task for the Aevatar host repo.
+Task details are read from stdin. End input with Ctrl-D.
+EOF
+}
+
+slugify() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
+}
+
+next_number() {
+  local max="0"
+  local path name n
+  for path in "$INBOX_DIR"/*.md "$DONE_DIR"/*.md "$FAILED_DIR"/*.md; do
+    [ -e "$path" ] || continue
+    name="$(basename "$path")"
+    case "$name" in
+      [0-9][0-9][0-9][0-9]-*)
+        n="${name%%-*}"
+        if [ "$((10#$n))" -gt "$max" ]; then
+          max="$((10#$n))"
+        fi
+        ;;
+    esac
+  done
+  printf '%04d\n' "$((max + 1))"
+}
+
+DRY_RUN=0
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  usage
+  exit 0
+fi
+if [ "${1:-}" = "--dry-run" ]; then
+  DRY_RUN=1
+  shift
+fi
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  usage >&2
+  exit 2
+fi
+
+TITLE="$1"
+RAW_SLUG="${2:-$TITLE}"
+SLUG="$(slugify "$RAW_SLUG")"
+if [ -z "$SLUG" ]; then
+  printf 'task slug is empty after normalization\n' >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="${FKST_AEVATAR_ENV:-$CONTROL_ROOT/fkst-aevatar.env}"
+
+if [ ! -f "$ENV_FILE" ]; then
+  printf 'missing config: %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+set +a
+
+if [ -z "${AEVATAR_REPO:-}" ]; then
+  printf 'AEVATAR_REPO is required in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+if [ -z "${FKST_INTEGRATION_BRANCH:-}" ]; then
+  printf 'FKST_INTEGRATION_BRANCH is required in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+RUNTIME_ROOT="$(FKST_INTEGRATION_BRANCH="$FKST_INTEGRATION_BRANCH" fkst --repo "$AEVATAR_REPO" status \
+  | sed -n 's/^runtime_root: //p' | head -n 1)"
+if [ -z "$RUNTIME_ROOT" ]; then
+  printf 'failed to resolve FKST runtime root\n' >&2
+  exit 1
+fi
+
+INBOX_DIR="$RUNTIME_ROOT/evolve-requests/inbox"
+DONE_DIR="$RUNTIME_ROOT/evolve-requests/done"
+FAILED_DIR="$RUNTIME_ROOT/evolve-requests/failed"
+RUNBOOK="$CONTROL_ROOT/visible-codex-refactor-loop-operating-plan.md"
+DETAILS="$(cat)"
+NUMBER="$(next_number)"
+TARGET="$INBOX_DIR/$NUMBER-$SLUG.md"
+
+if [ "$DRY_RUN" -ne 1 ]; then
+  mkdir -p "$INBOX_DIR"
+  if [ -e "$TARGET" ]; then
+    printf 'refusing to overwrite existing task: %s\n' "$TARGET" >&2
+    exit 1
+  fi
+fi
+
+render_task() {
+  cat <<EOF
+# $TITLE
+
+⟦AI:FKST⟧
+
+## Control Runbook
+
+Before executing, read and obey:
+
+- \`$RUNBOOK\`
+- \`$AEVATAR_REPO/AGENTS.md\`
+
+The control runbook is the visible supervisor policy for this Aevatar FKST task. If it conflicts with package defaults, fail closed and record the conflict rather than expanding scope silently.
+
+## Host Configuration
+
+- Host repo: \`$AEVATAR_REPO\`
+- Integration branch: \`$FKST_INTEGRATION_BRANCH\`
+- Current control repo: \`$CONTROL_ROOT\`
+- FKST wrapper: \`$CONTROL_ROOT/scripts/fkst-aevatar\`
+
+## Host Forbidden Paths
+
+Do not modify backend, proto, API, actor, projection, workflow, runtime, database, backend tests, backend config, or architecture docs. If a backend error appears, only locate, reproduce, record, attribute, and risk-label it, then write exactly:
+
+\`后端错误已记录，按用户要求未修改\`
+
+## Trigger Source
+
+User-created FKST inbox task from the Aevatar control repo.
+
+## Root Cause
+
+Use real product/UI investigation from the Aevatar host repo and the runbook. Do not infer from memory.
+
+## Fix Path
+
+Implement the narrowest frontend/product slice that satisfies the task details below, using isolated FKST worktrees and the configured integration branch. Do not create PRs below the runbook threshold unless the user explicitly authorized that exception.
+
+## Task Details
+
+$DETAILS
+
+## Files allowlist
+
+- \`src/**\`
+- \`apps/**\`
+- \`packages/**\`
+- \`components/**\`
+- \`pages/**\`
+- \`public/**\`
+- \`styles/**\`
+- \`tests/**\`
+
+## Verification
+
+- Run focused frontend checks appropriate to touched files.
+- Run \`git diff --check\`.
+- Use visible browser verification when a local frontend page is available.
+- If tests are modified, run \`bash tools/ci/test_stability_guards.sh\`.
+
+## Commit body metadata
+
+trigger-source: user-created fkst inbox task via aevatar-frontend-loop
+action-type: frontend/product automation task
+equivalence-semantics: preserve backend behavior while improving the requested frontend/product behavior
+reuse: future Aevatar FKST tasks can reuse the runbook-injected task shape
+failure-trace-owner: fkst evolve/review verdicts and visible supervisor runbook
+
+⟦AI:FKST⟧
+EOF
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf 'DRY RUN target: %s\n\n' "$TARGET"
+  render_task
+else
+  render_task > "$TARGET"
+  printf '%s\n' "$TARGET"
+fi

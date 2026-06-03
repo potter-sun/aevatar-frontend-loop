@@ -215,6 +215,7 @@ Each round should check active work and active codex processes related to this l
 
 - Control repo: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop`
 - FKST wrapper: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/scripts/fkst-aevatar`
+- FKST task creator: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/scripts/add-aevatar-task`
 - FKST wrapper config: `/Users/pottersun/Desktop/sbt_projects/aevatar-frontend-loop/fkst-aevatar.env`
 - Repo: `/Users/pottersun/Desktop/sbt_projects/aevatar`
 - Remote: `git@github.com:aevatarAI/aevatar.git`
@@ -229,6 +230,8 @@ Each round should check active work and active codex processes related to this l
   - `./scripts/fkst-aevatar doctor`
   - `./scripts/fkst-aevatar start --print`
 - FKST runtime root: `/Users/pottersun/.local/state/fkst/runtime/Users-pottersun-Desktop-sbt_projects-aevatar`
+- Create new FKST tasks from the control repo with `./scripts/add-aevatar-task "Task title" [slug]`. The task creator injects this runbook path, Aevatar host rules path, integration branch, forbidden backend boundary, PR threshold reminder, verification requirements, and the `⟦AI:FKST⟧` sentinel into the inbox task.
+- Use `./scripts/add-aevatar-task --dry-run "Task title" [slug]` to preview the generated inbox body without writing a task.
 - Keep #1642 untouched unless the user explicitly asks.
 - Do not put thread/bootstrap/supervisor-carrier debugging content into unrelated GitHub issue cards.
 - New product/UI themes should get new issues; do not attach all future work to #1636.
@@ -238,12 +241,13 @@ Each round should check active work and active codex processes related to this l
 
 1. Reload local skill and host rules.
 2. Run `./scripts/fkst-aevatar doctor` from the control repo.
-3. Verify `consensus-rnd`.
-4. Record main worktree status.
-5. Inspect open automation PRs and labels.
-6. Run `git diff --check`.
-7. Check whether active work has no worker or missing status labels.
-8. Continue the consensus/implementation/review route.
-9. Enforce the 10-file PR threshold.
-10. Post visible transcript and GitHub status as needed.
-11. Stop before merge.
+3. Use `./scripts/add-aevatar-task --dry-run "Task title"` before adding any new FKST inbox task.
+4. Verify `consensus-rnd`.
+5. Record main worktree status.
+6. Inspect open automation PRs and labels.
+7. Run `git diff --check`.
+8. Check whether active work has no worker or missing status labels.
+9. Continue the consensus/implementation/review route.
+10. Enforce the 10-file PR threshold.
+11. Post visible transcript and GitHub status as needed.
+12. Stop before merge.
