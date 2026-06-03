@@ -279,10 +279,47 @@ diff --git a/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_ga
 index 7b74644..1b6d4b9 100644
 --- a/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_gate.lua.bak-fkst-pr-mode-20260603
 +++ b/opt/homebrew/lib/fkst/current/share/fkst/scripts/review_evidence_gate.lua
-@@ -854,12 +854,22 @@ function M.review_evidence_hash(value, opts)
+@@ -492,7 +492,29 @@ local function parse_section_key(section, key)
+     return trim(("\n" .. tostring(section or "")):match("\n%s*" .. key:gsub("([^%w])", "%%%1") .. "%s*=%s*([^%s]+)") or "")
++end
++
++local function strip_trailing_ai_sentinel(body)
++    local text = tostring(body or ""):gsub("%s+$", "")
++    local sentinel = tunable.primary_ai_sentinel()
++    if text == sentinel then
++        return ""
++    end
++    for _, suffix in ipairs({ "\n" .. sentinel, "\r\n" .. sentinel }) do
++        if text:sub(-#suffix) == suffix then
++            return text:sub(1, #text - #suffix):gsub("%s+$", "")
++        end
++    end
++    return text
  end
  
- function git_show_blob(branch, path, opts)
++local function append_ai_sentinel_at_end(body)
++    local text = strip_trailing_ai_sentinel(body)
++    local sentinel = tunable.primary_ai_sentinel()
++    if text == "" then
++        return sentinel .. "\n"
++    end
++    return text .. "\n\n" .. sentinel .. "\n"
++end
++
+function M.hash_text(text, opts)
+     opts = opts or {}
+     if type(opts.hash_text) == "function" then
+@@ -734,9 +756,9 @@ function M.ensure_protected_witness_section(body, witness)
+-    local text = tostring(body or ""):gsub("%s+$", "")
++    local text = strip_trailing_ai_sentinel(body)
+     local section = M.render_protected_witness(witness):gsub("%s+$", "")
+     if parse_protected_section(text) ~= "" then
+         text = text:gsub("\n?##%s*Protected layer%s*\n.*", "")
+     end
+-    return text .. "\n\n" .. section .. "\n"
++    return append_ai_sentinel_at_end(text .. "\n\n" .. section)
+ end
+@@ -856,9 +878,19 @@ function git_show_blob(branch, path, opts)
 +    if fkst_paths.is_runtime_pipeline_artifact(path) then
 +        local ok, body = pcall(file.read, path)
 +        if ok then return tostring(body or ""), nil end

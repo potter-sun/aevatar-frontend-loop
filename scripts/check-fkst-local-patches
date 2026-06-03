@@ -104,6 +104,13 @@ do
   require_backup_differs "$rel" "bak-fkst-pr-mode-20260603" "runtime artifact support patch"
 done
 
+require_pattern "scripts/review_evidence_gate.lua" \
+  "strip_trailing_ai_sentinel" \
+  "protected witness preserves AI sentinel helper"
+require_pattern "scripts/review_evidence_gate.lua" \
+  "append_ai_sentinel_at_end(text .. \"\\n\\n\" .. section)" \
+  "protected witness appends AI sentinel after witness section"
+
 require_backup_same "departments/github_publisher/main.lua" \
   "bak-fkst-pr-decoration-20260603" "mistaken FKST-native PR decoration patch"
 require_backup_same "departments/evolve/candidate_implement.lua" \

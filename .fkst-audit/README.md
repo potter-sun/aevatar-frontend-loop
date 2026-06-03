@@ -48,6 +48,10 @@ blob:
 - `departments/review/context_helpers.lua`
 - `departments/review/worktree_artifacts.lua`
 - `scripts/review_evidence_gate.lua`
+  - Keeps runtime pipeline artifact support for review evidence.
+  - Preserves the `⟦AI:FKST⟧` sentinel as the final line when appending the
+    protected-layer witness. Without this, FKST can mark a valid implement
+    verdict as `artifact-missing-sentinel` after adding the witness section.
 
 They are not GitHub decoration logic. Reverting them may make FKST review or
 evidence gates fail when artifacts are stored in the runtime pipeline tree.
