@@ -144,12 +144,14 @@ For Aevatar, do not modify:
 - API
 - actor
 - projection
-- workflow
-- runtime
+- workflow engine/backend paths
+- backend/runtime infrastructure paths
 - database
 - backend tests
 - backend config
 - architecture docs
+
+Frontend page runtime helper directories such as `apps/aevatar-console-web/src/pages/**/runtime/**` are allowed for frontend/product tasks; they are not backend/runtime infrastructure.
 
 If an Aevatar backend error appears, only locate, reproduce, record, attribute, and risk-label. Write exactly:
 

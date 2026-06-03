@@ -140,7 +140,7 @@ This sync is the only allowed direct push to the integration branch. If the sync
 
 ## Host Forbidden Paths
 
-Do not modify backend, proto, API, actor, projection, workflow, runtime, database, backend tests, backend config, or architecture docs. If a backend error appears, only locate, reproduce, record, attribute, and risk-label it, then write exactly:
+Do not modify backend, proto, API, actor, projection, workflow engine/backend paths, backend/runtime infrastructure, database, backend tests, backend config, or architecture docs. Frontend page runtime helpers under \`apps/aevatar-console-web/src/pages/**/runtime/**\` are allowed for frontend/product tasks. If a backend error appears, only locate, reproduce, record, attribute, and risk-label it, then write exactly:
 
 \`后端错误已记录，按用户要求未修改\`
 
